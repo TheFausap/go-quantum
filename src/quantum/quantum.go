@@ -17,6 +17,8 @@ var QuantumLambda float32 = 0.0
 var QECType int = 0
 var QECWidth int = 0
 
+const numRegs = 4
+
 func QuantumQECSetStatus(stype int, swidth int) {
 	QECType = stype
 	QECWidth = swidth
@@ -113,6 +115,7 @@ func QuantumQECCounter(inc int, frequency int, reg *QuantumReg) int {
 	}
 	return counter
 }
+
 func QuantumCNOTft(control int, target int, reg *QuantumReg) {
 	var lambda float32
 
@@ -132,6 +135,64 @@ func QuantumCNOTft(control int, target int, reg *QuantumReg) {
 	QECType = tmp
 }
 
+func QuantumSigmaXft(target int, reg *QuantumReg) {
+	var lambda float32
+	var tmp int
+
+	tmp = QECType
+	QECType = 0
+
+	lambda = QuantumGetDecoherence()
+	QuantumSetDecoherence(0)
+
+	QuantumSigmaX(target, reg)
+	QuantumSigmaX(target+QECWidth, reg)
+	QuantumSetDecoherence(lambda)
+	QuantumSigmaX(target+2*QECWidth, reg)
+
+	QuantumQECCounter(1, 0, reg)
+
+	QECType = tmp
+}
+
+func QuantumToffolift(control1 int, control2 int, target int, reg *QuantumReg) {
+	var c1, c2 int
+	var mask uint32
+
+	mask = (1 << uint(target)) +
+		(1 << uint(target+QECWidth)) +
+		(1 << uint(target+2*QECWidth))
+
+	for i := 0; i < reg.size; i++ {
+		c1 = 0
+		c2 = 0
+		if reg.node[i].state&(1<<uint(control1)) != 0 {
+			c1 = 1
+		}
+		if reg.node[i].state&(1<<uint(control1+QECWidth)) != 0 {
+			c1 ^= 1
+		}
+		if reg.node[i].state&(1<<uint(control1+2*QECWidth)) != 0 {
+			c1 ^= 1
+		}
+		if reg.node[i].state&(1<<uint(control2)) != 0 {
+			c2 = 1
+		}
+		if reg.node[i].state&(1<<uint(control2+QECWidth)) != 0 {
+			c2 ^= 1
+		}
+		if reg.node[i].state&(1<<uint(control2+2*QECWidth)) != 0 {
+			c2 ^= 1
+		}
+		if c1 == 1 && c2 == 1 {
+			reg.node[i].state = reg.node[i].state ^ mask
+		}
+	}
+	QuantumDecohere(reg)
+
+	QuantumQECCounter(1, 0, reg)
+}
+
 func QuantumGetDecoherence() float32 {
 	return QuantumLambda
 }
@@ -142,6 +203,253 @@ func QuantumSetDecoherence(l float32) {
 		QuantumLambda = l
 	} else {
 		QuantumStatus = 0
+	}
+}
+
+//This is a semi-quantum fulladder. It adds to b_in
+//a c-number. Carry-in bit is c_in and carry_out is
+//c_out. xlt-l and L are enablebits. See documentation
+//for further information
+func Muxfa(a int, bIn int, cIn int, cOut int, xltL int, L int, total int, reg *QuantumReg) {
+	if a == 0 {
+		QuantumToffoli(bIn, cIn, cOut, reg)
+		QuantumCNOT(bIn, cIn, reg)
+	}
+
+	if a == 3 {
+		QuantumToffoli(L, cIn, cOut, reg)
+		QuantumCNOT(L, cIn, reg)
+		QuantumToffoli(bIn, cIn, cOut, reg)
+		QuantumCNOT(bIn, cIn, reg)
+	}
+
+	if a == 1 {
+		QuantumToffoli(L, xltL, bIn, reg)
+		QuantumToffoli(bIn, cIn, cOut, reg)
+		QuantumToffoli(L, xltL, bIn, reg)
+		QuantumToffoli(bIn, cIn, cOut, reg)
+		QuantumToffoli(L, xltL, cIn, reg)
+		QuantumToffoli(bIn, cIn, cOut, reg)
+		QuantumCNOT(bIn, cIn, reg)
+	}
+
+	if a == 2 {
+		QuantumSigmaX(xltL, reg)
+		QuantumToffoli(L, xltL, bIn, reg)
+		QuantumToffoli(bIn, cIn, cOut, reg)
+		QuantumToffoli(L, xltL, bIn, reg)
+		QuantumToffoli(bIn, cIn, cOut, reg)
+		QuantumToffoli(L, xltL, cIn, reg)
+		QuantumToffoli(bIn, cIn, cOut, reg)
+		QuantumCNOT(bIn, cIn, reg)
+		QuantumSigmaX(xltL, reg)
+	}
+}
+
+func MuxfaInv(a int, bIn int, cIn int, cOut int, xltL int, L int, total int, reg *QuantumReg) {
+	if a == 0 {
+		QuantumCNOT(bIn, cIn, reg)
+		QuantumToffoli(bIn, cIn, cOut, reg)
+	}
+
+	if a == 3 {
+		QuantumCNOT(bIn, cIn, reg)
+		QuantumToffoli(bIn, cIn, cOut, reg)
+		QuantumCNOT(L, cIn, reg)
+		QuantumToffoli(L, cIn, cOut, reg)
+	}
+
+	if a == 1 {
+		QuantumCNOT(bIn, cIn, reg)
+		QuantumToffoli(bIn, cIn, cOut, reg)
+		QuantumToffoli(L, xltL, cIn, reg)
+		QuantumToffoli(bIn, cIn, cOut, reg)
+		QuantumToffoli(L, xltL, bIn, reg)
+		QuantumToffoli(bIn, cIn, cOut, reg)
+		QuantumToffoli(L, xltL, bIn, reg)
+	}
+
+	if a == 2 {
+		QuantumSigmaX(xltL, reg)
+		QuantumCNOT(bIn, cIn, reg)
+		QuantumToffoli(bIn, cIn, cOut, reg)
+		QuantumToffoli(L, xltL, cIn, reg)
+		QuantumToffoli(bIn, cIn, cOut, reg)
+		QuantumToffoli(L, xltL, bIn, reg)
+		QuantumToffoli(bIn, cIn, cOut, reg)
+		QuantumToffoli(L, xltL, bIn, reg)
+		QuantumSigmaX(xltL, reg)
+	}
+}
+
+//This is a semi-quantum halfadder. It adds to b_in
+//a c-number. Carry-in bit is c_in and carry_out is
+//not necessary. xlt-l and L are enablebits. See
+//documentation for further information
+func Muxha(a int, bIn int, cIn int, xltL int, L int, total int, reg *QuantumReg) {
+	if a == 0 {
+		QuantumCNOT(bIn, cIn, reg)
+	}
+	if a == 3 {
+		QuantumCNOT(L, cIn, reg)
+		QuantumCNOT(bIn, cIn, reg)
+	}
+
+	if a == 1 {
+		QuantumToffoli(L, xltL, cIn, reg)
+		QuantumCNOT(bIn, cIn, reg)
+	}
+
+	if a == 2 {
+		QuantumSigmaX(xltL, reg)
+		QuantumToffoli(L, xltL, cIn, reg)
+		QuantumCNOT(bIn, cIn, reg)
+		QuantumSigmaX(xltL, reg)
+	}
+}
+
+func MuxhaInv(a int, bIn int, cIn int, xltL int, L int, total int, reg *QuantumReg) {
+	if a == 0 {
+		QuantumCNOT(bIn, cIn, reg)
+	}
+
+	if a == 3 {
+		QuantumCNOT(bIn, cIn, reg)
+		QuantumCNOT(L, cIn, reg)
+	}
+
+	if a == 1 {
+		QuantumCNOT(bIn, cIn, reg)
+		QuantumToffoli(L, xltL, cIn, reg)
+	}
+
+	if a == 2 {
+		QuantumSigmaX(xltL, reg)
+		QuantumCNOT(bIn, cIn, reg)
+		QuantumToffoli(L, xltL, cIn, reg)
+		QuantumSigmaX(xltL, reg)
+	}
+}
+
+func Madd(a int, aInv int, width int, reg *QuantumReg) {
+	var total, j int
+
+	total = numRegs*width + 2
+	for i := 0; i < width-1; i++ {
+		if (1<<uint(i))&a != 0 {
+			j = 1 << 1
+		} else {
+			j = 0
+		}
+		if (1<<uint(i))&aInv != 0 {
+			j += 1
+		}
+		Muxfa(j, width+i, i, i+1, 2*width, 2*width+1, total, reg)
+	}
+	j = 0
+	if (1<<uint(width-1))&a != 0 {
+		j = 2
+	}
+	if (1<<uint(width-1))&aInv != 0 {
+		j += 1
+	}
+	Muxha(j, 2*width-1, width-1, 2*width, 2*width+1, total, reg)
+}
+
+func MaddInv(a int, aInv int, width int, reg *QuantumReg) {
+	var total, j int
+
+	total = numRegs*width + 2
+	j = 0
+
+	if 1<<uint(width-1)&a != 0 {
+		j = 2
+	}
+	if 1<<uint(width-1)&aInv != 0 {
+		j += 1
+	}
+
+	MuxhaInv(j, width-1, 2*width-1, 2*width, 2*width+1, total, reg)
+
+	for i := width - 2; i >= 0; i-- {
+		if (1<<uint(i))&a != 0 {
+			j = 1 << 1
+		} else {
+			j = 0
+		}
+		if (1<<uint(i))&aInv != 0 {
+			j += 1
+		}
+		MuxfaInv(j, i, width+i, width+1+i, 2*width, 2*width+1, total, reg)
+	}
+}
+
+func Addn(N int, a int, width int, reg *QuantumReg) {
+	testSum(N-a, width, reg)
+	Madd((1<<uint(width))+a-N, a, width, reg)
+}
+
+func AddnInv(N int, a int, width int, reg *QuantumReg) {
+	QuantumCNOT(2*width+1, 2*width, reg)
+	MaddInv(1<<uint(width)-a, N-a, width, reg)
+
+	QuantumSwapTheLeads(width, reg)
+
+	testSum(a, width, reg)
+}
+
+func AddModN(N int, a int, width int, reg *QuantumReg) {
+	Addn(N, a, width, reg)
+	AddnInv(N, a, width, reg)
+}
+
+func testSum(compare int, width int, reg *QuantumReg) {
+	if compare&(1<<uint(width-1)) != 0 {
+		QuantumCNOT(2*width-1, width-1, reg)
+		QuantumSigmaX(2*width-1, reg)
+		QuantumCNOT(2*width-1, 0, reg)
+	} else {
+		QuantumSigmaX(2*width-1, reg)
+		QuantumCNOT(2*width-1, width-1, reg)
+	}
+	for i := width - 2; i > 0; i-- {
+		if compare&1<<uint(i) != 0 {
+			QuantumToffoli(i+1, width+i, i, reg)
+			QuantumSigmaX(width+i, reg)
+			QuantumToffoli(i+1, width+i, 0, reg)
+		} else {
+			QuantumSigmaX(width+i, reg)
+			QuantumToffoli(i+1, width+i, i, reg)
+		}
+	}
+	if compare&1 != 0 {
+		QuantumSigmaX(width, reg)
+		QuantumToffoli(width, 1, 0, reg)
+	}
+	QuantumToffoli(2*width+1, 0, 2*width, reg)
+
+	if compare&1 != 0 {
+		QuantumToffoli(width, 1, 0, reg)
+		QuantumSigmaX(width, reg)
+	}
+
+	for i := 1; i <= width-2; i++ {
+		if compare&1<<uint(i) != 0 {
+			QuantumToffoli(i+1, width+i, 0, reg)
+			QuantumSigmaX(width+i, reg)
+			QuantumToffoli(i+1, width+i, i, reg)
+		} else {
+			QuantumToffoli(i+1, width+i, i, reg)
+			QuantumSigmaX(width+i, reg)
+		}
+	}
+	if compare&1<<uint(width-1) != 0 {
+		QuantumCNOT(2*width-1, 0, reg)
+		QuantumSigmaX(2*width-1, reg)
+		QuantumCNOT(2*width-1, width-1, reg)
+	} else {
+		QuantumCNOT(2*width-1, width-1, reg)
+		QuantumSigmaX(2*width-1, reg)
 	}
 }
 
@@ -843,6 +1151,92 @@ func QuantumSigmaZ(target int, reg *QuantumReg) {
 		}
 	}
 	QuantumDecohere(reg)
+}
+
+func QuantumToffoli(control1 int, control2 int, target int, reg *QuantumReg) {
+	var qec int
+
+	QuantumQECGetStatus(&qec, nil)
+
+	if qec != 0 {
+		QuantumToffolift(control1, control2, target, reg)
+	} else {
+		for i := 0; i < reg.size; i++ {
+			if reg.node[i].state&(1<<uint(control1)) != 0 {
+				if reg.node[i].state&(1<<uint(control2)) != 0 {
+					reg.node[i].state ^= (1 << uint(target))
+				}
+			}
+		}
+	}
+	QuantumDecohere(reg)
+}
+
+func QuantumSigmaX(target int, reg *QuantumReg) {
+	var qec int
+
+	QuantumQECGetStatus(&qec, nil)
+
+	if qec != 0 {
+		QuantumSigmaXft(target, reg)
+	} else {
+		for i := 0; i < reg.size; i++ {
+			reg.node[i].state ^= (1 << uint(target))
+		}
+	}
+
+	QuantumDecohere(reg)
+}
+
+func QuantumSigmaY(target int, reg *QuantumReg) {
+	for i := 0; i < reg.size; i++ {
+		/* Flip the target bit of each basis state and multiply with
+		+/- i */
+		reg.node[i].state ^= (1 << uint(target))
+
+		if reg.node[i].state&(1<<uint(target)) != 0 {
+			reg.node[i].amplitude *= complex(0, 1)
+		} else {
+			reg.node[i].amplitude *= complex(0, -1)
+		}
+	}
+	QuantumDecohere(reg)
+}
+
+func QuantumSwapTheLeads(width int, reg *QuantumReg) {
+	var pat1, pat2 uint32
+	var qec int
+	var l uint32
+
+	QuantumQECGetStatus(&qec, nil)
+
+	if qec != 0 {
+		for i := 0; i < width; i++ {
+			QuantumCNOT(i, width+i, reg)
+			QuantumCNOT(width+i, i, reg)
+			QuantumCNOT(i, width+i, reg)
+		}
+	} else {
+		for i := 0; i < reg.size; i++ {
+			pat1 = reg.node[i].state % (1 << uint(width))
+			pat2 = 0
+			for j := 0; j < width; j++ {
+				pat2 += reg.node[i].state & (1 << uint(width+j))
+			}
+			l = reg.node[i].state - (pat1 + pat2)
+			l += (pat1 << uint(width))
+			l += (pat2 >> uint(width))
+			reg.node[i].state = l
+		}
+	}
+}
+
+func QuantumSwapTheLeadsOMULNControlled(control int, width int, reg *QuantumReg) {
+	for i := 0; i < width; i++ {
+		QuantumToffoli(control, width+i, 2*width+i+2, reg)
+		QuantumToffoli(control, 2*width+i+2, width+i, reg)
+		QuantumToffoli(control, width+i, 2*width+i+2, reg)
+	}
 }
 
 func QuantumGateCounter(inc int) int {
